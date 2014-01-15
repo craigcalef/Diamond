@@ -26,8 +26,9 @@ from diamond.metric import Metric
 try:
     from netappsdk.NaServer import *
     from netappsdk.NaElement import *
+    netappsdk = 0
 except ImportError:
-    netappsdk = None
+    netappsdk = 1
 
 __author__ = 'peter@phyn3t.com'
 
@@ -36,7 +37,7 @@ class netappDiskCol():
     """ Our netappDisk Collector
     """
 
-    def __init__(self, device, ip, user, password, prefix, pm):
+    def __init__(self, device, ip, user, password, parent):
         """ Collectors our metrics for our netapp filer
         """
 
@@ -44,8 +45,9 @@ class netappDiskCol():
         self.ip = ip
         self.netapp_user = user
         self.netapp_password = password
-        self.path_prefix = prefix
-        self.publish_metric = pm
+        self.path_prefix = parent[0]
+        self.publish_metric = parent[1]
+        self.log = parent[2]
         self._netapp_login()
 
         # Grab our netapp XML
@@ -123,7 +125,7 @@ class netappDiskCol():
 
         for aggregate in agr_results:
             self.push('avg_busy', 'aggregate.' + aggregate,
-                agr_results[aggregate])
+                      agr_results[aggregate])
 
     def consistency_point(self):
         """ Collector for getting count of consistancy points
@@ -155,7 +157,7 @@ class netappDiskCol():
 
         if not type(cp_2) is list or not type(cp_1) is list:
             log.error("consistency point data not available for filer: %s"
-            % self.device)
+                      % self.device)
             return
 
         cp_1 = {
@@ -262,8 +264,9 @@ class netappDiskCol():
         netapp_data = self.server.invoke_elem(netapp_api)
 
         if netapp_data.results_status() == 'failed':
-            self.log.error('While using netapp API failed to retrieve '
-            'disk-list-info for netapp filer %s' % self.device)
+            self.log.error(
+                'While using netapp API failed to retrieve '
+                'disk-list-info for netapp filer %s' % self.device)
             print netapp_data.sprintf()
             return
         netapp_xml = \
@@ -288,8 +291,11 @@ class netappDiskCol():
         graphite_path += '.' + self.device + '.' + type
         graphite_path += '.' + metric_name
 
-        metric = \
-          Metric(graphite_path, metric_value, precision=4, host=self.device)
+        metric = Metric(
+            graphite_path,
+            metric_value,
+            precision=4,
+            host=self.device)
 
         self.publish_metric(metric)
 
@@ -304,7 +310,7 @@ class netappDisk(diamond.collector.Collector):
         """ Collectors our metrics for our netapp filer --START HERE--
         """
 
-        if netappsdk is None:
+        if netappsdk:
             self.log.error(
                 'Failed to import netappsdk.NaServer or netappsdk.NaElement')
             return
@@ -313,10 +319,9 @@ class netappDisk(diamond.collector.Collector):
             return
 
         self.running.add(device)
-        prefix = self.config['path_prefix']
-        pm = self.publish_metric
+        parent = (self.config['path_prefix'], self.publish_metric, self.log)
 
-        netappDiskCol(device, ip, user, password, prefix, pm)
+        netappDiskCol(device, ip, user, password, parent)
         self.running.remove(device)
 
     def get_schedule(self):
@@ -337,11 +342,14 @@ class netappDisk(diamond.collector.Collector):
                 if task_name in schedule:
                     raise KeyError('Duplicate netapp filer scheduled')
 
-                schedule[task_name] = (self.collect,
-                        (device, filer_config['ip'],
-                          filer_config['user'], filer_config['password']),
-                        int(self.config['splay']),
-                        int(self.config['interval']))
+                schedule[task_name] = (
+                    self.collect,
+                    (device,
+                     filer_config['ip'],
+                     filer_config['user'],
+                     filer_config['password']),
+                    int(self.config['splay']),
+                    int(self.config['interval']))
                 self.log.info("Set up scheduler for %s" % device)
 
         return schedule
